@@ -1,0 +1,15 @@
+flowchart LR
+  subgraph Phone["Android phone (Unity 6 + Vuforia 11)"]
+    CAM["Camera"] --> VUF["Vuforia Engine<br/>image tracking"]
+    VUF -->|"runtime image targets<br/>(5 card textures)"| TC["TrackedCard<br/>found / lost"]
+    TC --> APP["ARFlashcardsApp<br/>orchestrator"]
+    APP --> SES["FlashcardSession<br/>current card, progress"]
+    APP --> MODEL["AnimalFactory<br/>3D animal + animation"]
+    SES --> UI["UiController<br/>info card, chips, quiz"]
+    UI --> QZ["QuizRound"]
+    UI --> LOC["Loc<br/>EN / HI / TA"]
+    UI --> TTS["Android<br/>Text-to-Speech"]
+    APP -. "Vuforia unavailable<br/>or user taps 3D" .-> VIEW["3D viewer stage"]
+    VIEW --> MODEL
+  end
+  CARDS["Printed cards<br/>(A4 sheet, 90 mm)"] --> CAM
