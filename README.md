@@ -8,4 +8,4 @@ Point your phone at a printed animal card: a 3D animal appears on the card, with
 * Open this folder in Unity Hub (Add > Add project from disk). Unity 6 (tested design target 6000.x).
 * No packages are needed to compile. Vuforia is installed by the menu `AR Flashcards > Setup Wizard`.
 * Print `Cards/PRINT_ME_A4.pdf` (5 cards, 90 mm wide).
-* Other docs: `docs/TROUBLESHOOTING.md`, `docs/TEST_REPORT.md`, `docs/PROJECT_REPORT.md`, `docs/VIVA_QA.md`.
+* Other docs: `docs/TROUBLESHOOTING.md`, `docs/TEST_REPORT.md`, .
