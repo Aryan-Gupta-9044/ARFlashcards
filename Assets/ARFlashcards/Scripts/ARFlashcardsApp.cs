@@ -26,6 +26,11 @@ namespace ARFlashcards
         Mode mode = Mode.Starting;
         bool userForcedViewer;
         bool targetsReady;
+        bool cameraRequested;
+        bool permissionPending;
+#if UNITY_ANDROID && !UNITY_EDITOR
+        UnityEngine.Android.PermissionCallbacks permissionCallbacks;
+#endif
         string vuforiaProblem;      // human-readable reason AR is unavailable
         float startTime;
 
@@ -68,18 +73,19 @@ namespace ARFlashcards
             ui = gameObject.AddComponent<UiController>();
             ui.Init(session, audioFx);
             ui.ModeToggleClicked += OnModeToggle;
+            ui.StartARClicked += BeginARStartup;
+            ui.ViewerClicked += OnViewerRequested;
+            ui.HomeClicked += ReturnHome;
             ui.CardPicked += OnCardPicked;
             ui.SpeakClicked += OnSpeak;
-            ui.SetStatus("Starting camera...", StatusKind.Info);
+            ui.SetStatus("Welcome! Start an AR experience when you are ready.", StatusKind.Info);
             ui.SetViewerMode(false);
 
             TextToSpeechBridge.Init();
             BuildStage();
 
-            try { VuforiaBridge.Hook(OnVuforiaInit, OnVuforiaStarted); }
-            catch (System.Exception e) { Problem("Vuforia is not available: " + e.Message); }
-
-            StartCoroutine(Watchdog());
+            try { VuforiaBridge.SetBehaviourEnabled(cam, false); }
+            catch (System.Exception e) { Debug.LogWarning("[ARFlashcards] Could not pause camera startup: " + e.Message); }
         }
 
         void OnDestroy()
@@ -160,7 +166,11 @@ namespace ARFlashcards
 
         void TryCreateTargets()
         {
-            if (targetsReady) return;
+            if (targetsReady)
+            {
+                if (!userForcedViewer && mode == Mode.Starting) EnterAR();
+                return;
+            }
             try
             {
                 if (!VuforiaBridge.BehaviourReady) return;
@@ -197,8 +207,10 @@ namespace ARFlashcards
             if (isTracked)
             {
                 session.Show(tc.card);
+                bool newlyDiscovered = DiscoveryJournal.Record(tc.card);
                 audioFx.PlayCardFound(tc.card.Id);
                 ui.SetStatus("Tracking: " + tc.card.Name(Lang.English), StatusKind.Tracking);
+                if (newlyDiscovered) ui.Toast("Discovered: " + tc.card.Name(Lang.English) + "!");
             }
             else
             {
@@ -227,6 +239,11 @@ namespace ARFlashcards
             vuforiaProblem = text;
             Debug.LogWarning("[ARFlashcards] " + text);
             if (mode == Mode.AR) return;                     // already working; keep going
+            cameraRequested = false;
+            VuforiaBridge.Unhook();
+            VuforiaBridge.SetBehaviourEnabled(cam, false);
+            ui.SetCameraLoading(false);
+            ui.SetHome(false);
             EnterViewer(true);
         }
 
@@ -234,6 +251,8 @@ namespace ARFlashcards
         void EnterAR()
         {
             mode = Mode.AR;
+            ui.SetCameraLoading(false);
+            ui.SetHome(false);
             stage.gameObject.SetActive(false);
             session.ClearVisible();
             foreach (var t in tracked) if (t != null && t.IsTracked) session.Show(t.card);
@@ -245,6 +264,8 @@ namespace ARFlashcards
         void EnterViewer(bool automatic)
         {
             mode = Mode.Viewer;
+            ui.SetCameraLoading(false);
+            ui.SetHome(false);
             stage.gameObject.SetActive(true);
             ui.SetViewerMode(true);
             if (automatic && vuforiaProblem != null)
@@ -260,9 +281,7 @@ namespace ARFlashcards
         {
             if (mode == Mode.Viewer)
             {
-                if (!targetsReady) { TryCreateTargets(); }
-                if (targetsReady) { userForcedViewer = false; EnterAR(); }
-                else ui.Toast(vuforiaProblem ?? "AR camera is not ready yet");
+                BeginARStartup();
             }
             else
             {
@@ -270,6 +289,75 @@ namespace ARFlashcards
                 vuforiaProblem = null;
                 EnterViewer(false);
             }
+        }
+
+        void OnViewerRequested()
+        {
+            userForcedViewer = true;
+            ui.SetCameraLoading(false);
+            EnterViewer(false);
+        }
+
+        void ReturnHome()
+        {
+            VuforiaBridge.Unhook();
+            VuforiaBridge.SetBehaviourEnabled(cam, false);
+            cameraRequested = false;
+            permissionPending = false;
+            mode = Mode.Starting;
+            session.ClearVisible();
+            if (stage != null) stage.gameObject.SetActive(false);
+            ui.SetViewerMode(false);
+            ui.SetStatus("Welcome! Start an AR experience when you are ready.", StatusKind.Info);
+        }
+
+        void BeginARStartup()
+        {
+            if (permissionPending) return;
+            userForcedViewer = false;
+            vuforiaProblem = null;
+            ui.SetHome(true);
+            ui.SetCameraLoading(true);
+            ui.SetStatus("Checking camera access…", StatusKind.Info);
+#if UNITY_ANDROID && !UNITY_EDITOR
+            if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.Camera))
+            {
+                ui.SetStatus("Camera access lets us recognize your animal flashcards.", StatusKind.Info);
+                permissionPending = true;
+                permissionCallbacks = new UnityEngine.Android.PermissionCallbacks();
+                permissionCallbacks.PermissionGranted += delegate(string permission)
+                {
+                    permissionPending = false;
+                    StartCameraAndVuforia();
+                };
+                permissionCallbacks.PermissionDenied += OnCameraPermissionDenied;
+                UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.Camera, permissionCallbacks);
+                return;
+            }
+#endif
+            StartCameraAndVuforia();
+        }
+
+        void OnCameraPermissionDenied(string permission)
+        {
+            permissionPending = false;
+            ui.SetStatus("Camera permission was not granted. Allow it in app settings, then retry.", StatusKind.Error);
+        }
+
+        void StartCameraAndVuforia()
+        {
+            if (cameraRequested) return;
+            cameraRequested = true;
+            startTime = Time.realtimeSinceStartup;
+            mode = Mode.Starting;
+            ui.SetStatus("Preparing camera and image recognition…", StatusKind.Info);
+            try
+            {
+                VuforiaBridge.Hook(OnVuforiaInit, OnVuforiaStarted);
+                VuforiaBridge.SetBehaviourEnabled(cam, true);
+                StartCoroutine(Watchdog());
+            }
+            catch (System.Exception e) { cameraRequested = false; Problem("Camera could not start: " + e.Message); }
         }
 
         void OnCardPicked(Card c)

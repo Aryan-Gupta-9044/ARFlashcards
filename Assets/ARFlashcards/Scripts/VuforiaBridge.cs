@@ -65,6 +65,13 @@ namespace ARFlashcards
                 cam.gameObject.AddComponent<VuforiaBehaviour>();
         }
 
+        public static void SetBehaviourEnabled(Camera cam, bool enabled)
+        {
+            if (cam == null) return;
+            var behaviour = cam.GetComponent<VuforiaBehaviour>();
+            if (behaviour != null) behaviour.enabled = enabled;
+        }
+
         /// <summary>Runtime image target from a texture - no Target Manager database needed.</summary>
         public static GameObject CreateImageTarget(Texture2D texture, float widthMeters, string targetName)
         {
@@ -85,6 +92,7 @@ namespace ARFlashcards
         }
         public static void Unhook() { }
         public static void EnsureBehaviour(Camera cam) { }
+        public static void SetBehaviourEnabled(Camera cam, bool enabled) { }
         public static GameObject CreateImageTarget(Texture2D texture, float widthMeters, string targetName)
         {
             throw new InvalidOperationException("Vuforia package is not installed");

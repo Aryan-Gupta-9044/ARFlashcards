@@ -16,6 +16,9 @@ namespace ARFlashcards
         public event Action ModeToggleClicked;
         public event Action<Card> CardPicked;
         public event Action<Card> SpeakClicked;
+        public event Action StartARClicked;
+        public event Action ViewerClicked;
+        public event Action HomeClicked;
 
         FlashcardSession session;
         AudioFx audio;
@@ -27,9 +30,13 @@ namespace ARFlashcards
         float toastUntil;
 
         // quiz
-        QuizRound quiz;
-        int score, asked;
-        float quizCloseAt;
+        QuizGame quizGame;
+        List<string> quizOptions;
+        bool journalOpen;
+        bool homeVisible = true;
+        bool cameraLoading;
+        bool exitConfirm;
+        bool abandonConfirm;
         readonly System.Random rng = new System.Random();
 
         // gfx
@@ -51,25 +58,16 @@ namespace ARFlashcards
         public void Init(FlashcardSession s, AudioFx fx)
         {
             session = s; audio = fx;
-            session.CurrentChanged += OnCurrentChanged;
-        }
-
-        void OnDestroy()
-        {
-            if (session != null) session.CurrentChanged -= OnCurrentChanged;
         }
 
         public void SetViewerMode(bool v) { viewerMode = v; }
+        public void SetHome(bool visible) { homeVisible = visible; }
+        public void SetCameraLoading(bool loading) { cameraLoading = loading; }
 
         public void SetStatus(string text, StatusKind kind) { statusText = text ?? ""; statusKind = kind; }
 
         public void Toast(string text) { Toast(text, 2.4f); }
         public void Toast(string text, float seconds) { toastText = text; toastUntil = Time.unscaledTime + seconds; }
-
-        void OnCurrentChanged(Card c)
-        {
-            if (quiz != null && c != null && c != quiz.Answer) quiz = null;     // scanned something else: drop the quiz
-        }
 
         // ------------------------------------------------------------------ gfx helpers
         static Texture2D MakeRounded(int size, float radius)
@@ -194,16 +192,81 @@ namespace ARFlashcards
             GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
             GUI.color = White;
 
+            if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
+            {
+                Event.current.Use();
+                if (quizGame != null && !quizGame.Complete) abandonConfirm = true;
+                else if (!homeVisible) { homeVisible = true; journalOpen = false; }
+                else exitConfirm = true;
+            }
+            if (exitConfirm || abandonConfirm)
+            {
+                Rect modal = new Rect(vW * .10f, vH * .36f, vW * .80f, 300f);
+                Box(modal, Panel);
+                bool abandoning = abandonConfirm;
+                Label(new Rect(modal.x + 24f, modal.y + 24f, modal.width - 48f, 100f), abandoning ? "Leave this quiz? Your current run will end." : "Are you sure you want to exit AR Flashcards?", 28, White, FontStyle.Bold, TextAnchor.MiddleCenter, true);
+                if (Button(new Rect(modal.x + 22f, modal.yMax - 92f, modal.width * .46f, 64f), abandoning ? "CONTINUE QUIZ" : "KEEP LEARNING", 21, Blue, White)) { exitConfirm = false; abandonConfirm = false; }
+                if (Button(new Rect(modal.xMax - modal.width * .46f - 22f, modal.yMax - 92f, modal.width * .46f, 64f), abandoning ? "LEAVE QUIZ" : "EXIT APP", 21, PanelLight, White))
+                {
+                    if (abandoning) { abandonConfirm = false; quizGame = null; homeVisible = true; if (HomeClicked != null) HomeClicked(); }
+                    else { exitConfirm = false; Application.Quit(); }
+                }
+                GUI.matrix = oldM; GUI.color = oldC; return;
+            }
+
+            if (homeVisible)
+            {
+                float hw = Mathf.Min(vW - 56f, 900f);
+                float hx = (vW - hw) * .5f;
+                Rect hero = new Rect(hx, Mathf.Max(insT + 30f, vH * .18f), hw, Mathf.Min(570f, vH * .62f));
+                Box(hero, Panel);
+                Label(new Rect(hero.x + 36f, hero.y + 42f, hw - 72f, 76f), "AR Flashcards", 52, White, FontStyle.Bold, TextAnchor.MiddleCenter, false);
+                Label(new Rect(hero.x + 48f, hero.y + 128f, hw - 96f, 72f), "Meet the animals. Discover something new.", 28, Muted, FontStyle.Normal, TextAnchor.MiddleCenter, true);
+                if (cameraLoading)
+                {
+                    Label(new Rect(hero.x + 40f, hero.y + 230f, hw - 80f, 100f), statusText, 28, Amber, FontStyle.Bold, TextAnchor.MiddleCenter, true);
+                    if (statusKind == StatusKind.Error)
+                    {
+                        if (Button(new Rect(hero.x + 48f, hero.yMax - 105f, hw - 96f, 72f), "RETRY CAMERA", 26, Blue, White))
+                        { if (StartARClicked != null) StartARClicked(); }
+                        if (Button(new Rect(hero.x + 48f, hero.yMax - 190f, hw - 96f, 72f), "OPEN 3D VIEWER", 26, PanelLight, White))
+                        { cameraLoading = false; homeVisible = false; if (ViewerClicked != null) ViewerClicked(); }
+                    }
+                }
+                else
+                {
+                    Label(new Rect(hero.x + 40f, hero.y + 228f, hw - 80f, 56f), "Discoveries  " + DiscoveryJournal.Count + " / " + CardLibrary.All.Count + "     •     Quiz sessions " + PlayerPrefs.GetInt("ARFlashcards.QuizSessions", 0), 22, Muted, FontStyle.Normal, TextAnchor.MiddleCenter, true);
+                    if (Button(new Rect(hero.x + 48f, hero.y + 310f, hw - 96f, 82f), "START AR EXPERIENCE", 28, Blue, White))
+                    { if (StartARClicked != null) StartARClicked(); }
+                    if (Button(new Rect(hero.x + 48f, hero.y + 410f, (hw - 108f) / 2f, 72f), "3D ANIMAL VIEWER", 23, PanelLight, White))
+                    { homeVisible = false; if (ViewerClicked != null) ViewerClicked(); }
+                    if (Button(new Rect(hero.x + 60f + (hw - 108f) / 2f, hero.y + 410f, (hw - 108f) / 2f, 72f), "DISCOVERY JOURNAL", 22, PanelLight, White)) journalOpen = true;
+                    if (Button(new Rect(hero.x + 48f, hero.y + 495f, hw - 96f, 58f), "EXIT APP", 20, new Color(.28f, .18f, .22f), White)) exitConfirm = true;
+                }
+                if (journalOpen) DrawJournal(hx + 20f, hw - 40f, hero.yMax + 300f);
+                GUI.matrix = oldM; GUI.color = oldC;
+                PointerInput.FeedGui(e, hero);
+                return;
+            }
+
             // ---- top bar
             float y = insT + 8f;
             Rect bar = new Rect(left, y, width, 104f);
             Box(bar, Panel);
-            Label(new Rect(bar.x + 28f, bar.y + 10f, 460f, 52f), "AR Flashcards", 40, White, FontStyle.Bold, TextAnchor.MiddleLeft, false);
+            Label(new Rect(bar.x + 118f, bar.y + 10f, 350f, 52f), "AR Flashcards", 36, White, FontStyle.Bold, TextAnchor.MiddleLeft, false);
             string prog = "Scanned " + session.Scanned + " / " + session.Total + (session.Complete ? "  - all done!" : "");
-            Label(new Rect(bar.x + 28f, bar.y + 60f, 460f, 36f), prog, 24, session.Complete ? Green : Muted, FontStyle.Normal, TextAnchor.MiddleLeft, false);
+            Label(new Rect(bar.x + 118f, bar.y + 60f, 350f, 36f), prog, 22, session.Complete ? Green : Muted, FontStyle.Normal, TextAnchor.MiddleLeft, false);
 
             Rect modeR = new Rect(bar.xMax - 20f - 170f, bar.y + 20f, 170f, 64f);
             Rect langR = new Rect(modeR.x - 12f - 100f, bar.y + 20f, 100f, 64f);
+            Rect journalR = new Rect(langR.x - 12f - 156f, bar.y + 20f, 156f, 64f);
+            if (Button(journalR, "JOURNAL", 22, PanelLight, White)) journalOpen = !journalOpen;
+            Rect homeR = new Rect(bar.x + 14f, bar.y + 20f, 90f, 64f);
+            if (Button(homeR, "HOME", 20, PanelLight, White))
+            {
+                if (quizGame != null && !quizGame.Complete) abandonConfirm = true;
+                else { homeVisible = true; cameraLoading = false; journalOpen = false; quizGame = null; if (HomeClicked != null) HomeClicked(); }
+            }
             if (Button(modeR, viewerMode ? "3D VIEW" : "AR MODE", 26, viewerMode ? Amber : Blue, viewerMode ? new Color(0.1f, 0.1f, 0.1f) : White))
             { if (ModeToggleClicked != null) ModeToggleClicked(); }
             if (Button(langR, Loc.Code, 28, PanelLight, White)) Loc.Cycle();
@@ -244,7 +307,8 @@ namespace ARFlashcards
             // ---- bottom panel
             float bottom = vH - insB - 20f;
             float panelTop;
-            if (quiz != null) panelTop = DrawQuiz(left, width, bottom);
+            if (journalOpen) panelTop = DrawJournal(left, width, bottom);
+            else if (quizGame != null) panelTop = DrawQuiz(left, width, bottom);
             else panelTop = DrawInfo(left, width, bottom);
 
             // ---- zoom buttons (right edge, vertically centred between top stuff and panel)
@@ -273,7 +337,6 @@ namespace ARFlashcards
             GUI.matrix = oldM;
             GUI.color = oldC;
 
-            if (quiz != null && quiz.Solved && Time.unscaledTime > quizCloseAt) quiz = null;
         }
 
         // ------------------------------------------------------------------ info card
@@ -316,7 +379,7 @@ namespace ARFlashcards
 
             // buttons
             float by = card.yMax - 20f - 88f;
-            int count = viewerMode ? 3 : 2;
+            int count = viewerMode ? 4 : 2;
             float gap = 14f, bw = (iw - gap * (count - 1)) / count;
             Rect b0 = new Rect(ix, by, bw, 88f);
             Rect b1 = new Rect(ix + (bw + gap), by, bw, 88f);
@@ -325,13 +388,41 @@ namespace ARFlashcards
             if (viewerMode)
             {
                 Rect b2 = new Rect(ix + 2 * (bw + gap), by, bw, 88f);
-                if (Button(b2, "NEXT", 30, PanelLight, White))
+                Rect b3 = new Rect(ix + 3 * (bw + gap), by, bw, 88f);
+                if (Button(b2, "NEXT", 26, PanelLight, White))
                 {
                     int i = (CardLibrary.IndexOf(c) + 1) % CardLibrary.All.Count;
                     if (CardPicked != null) CardPicked(CardLibrary.All[i]);
                 }
+                if (Button(b3, "RESET VIEW", 21, PanelLight, White)) ModelInteraction.RequestReset();
             }
             return card.y;
+        }
+
+        float DrawJournal(float left, float width, float bottom)
+        {
+            float h = Mathf.Min(590f, bottom - 80f);
+            Rect p = new Rect(left, bottom - h, width, h);
+            Box(p, Panel);
+            Label(new Rect(p.x + 28f, p.y + 14f, width - 180f, 58f), "Animal Discovery Journal", 36, White, FontStyle.Bold, TextAnchor.MiddleLeft, false);
+            Label(new Rect(p.x + 28f, p.y + 72f, width - 56f, 42f), DiscoveryJournal.Count + " / " + CardLibrary.All.Count + " animals discovered", 25, Muted, FontStyle.Normal, TextAnchor.MiddleLeft, false);
+            if (Button(new Rect(p.xMax - 132f, p.y + 18f, 100f, 64f), "CLOSE", 22, PanelLight, White)) journalOpen = false;
+            float rowY = p.y + 128f;
+            float rowH = Mathf.Min(68f, (h - 156f) / Mathf.Max(1, CardLibrary.All.Count));
+            for (int i = 0; i < CardLibrary.All.Count; i++)
+            {
+                Card c = CardLibrary.All[i];
+                bool found = DiscoveryJournal.IsDiscovered(c);
+                Rect row = new Rect(p.x + 24f, rowY + i * (rowH + 5f), width - 48f, rowH);
+                Box(row, found ? PanelLight : new Color(0.10f, 0.11f, 0.17f, 0.95f));
+                Dot(new Rect(row.x + 16f, row.y + row.height * .5f - 10f, 20f, 20f), found ? Green : Muted);
+                Label(new Rect(row.x + 52f, row.y + 4f, row.width * .34f, row.height - 8f), found ? c.Name(Loc.Current) : "Undiscovered animal", 23, found ? White : Muted, FontStyle.Bold, TextAnchor.MiddleLeft, false);
+                string fact = found ? c.Fact(Lang.English) : "Scan this flashcard to reveal its fact.";
+                Label(new Rect(row.x + row.width * .40f, row.y + 4f, row.width * .57f, row.height - 8f), fact, Fit(fact, row.width * .57f, row.height - 8f, 19, 13, FontStyle.Normal), Muted, FontStyle.Normal, TextAnchor.MiddleLeft, true);
+            }
+            if (DiscoveryJournal.Complete)
+                Label(new Rect(p.x + 20f, p.yMax - 38f, width - 40f, 30f), "Achievement unlocked: Animal Explorer!", 22, Amber, FontStyle.Bold, TextAnchor.MiddleCenter, false);
+            return p.y;
         }
 
         void DrawImage(Rect r, Texture2D tex, TextAnchor anchor)
@@ -347,44 +438,57 @@ namespace ARFlashcards
         // ------------------------------------------------------------------ quiz
         void StartQuiz(Card c)
         {
-            quiz = QuizRound.Create(c, CardLibrary.All, rng, 4);
-            asked++;
+            quizGame = QuizGame.Create(rng);
+            quizOptions = quizGame.ShuffledOptions(rng);
+            PlayerPrefs.SetInt("ARFlashcards.QuizSessions", PlayerPrefs.GetInt("ARFlashcards.QuizSessions", 0) + 1);
+            PlayerPrefs.Save();
         }
 
         float DrawQuiz(float left, float width, float bottom)
         {
-            float h = 560f;
+            float h = Mathf.Min(650f, bottom - 80f);
             Rect p = new Rect(left, bottom - h, width, h);
             Box(p, Panel);
-            Label(new Rect(p.x + 32f, p.y + 18f, width - 200f, 60f), "Which animal is this?", 40, White, FontStyle.Bold, TextAnchor.MiddleLeft, false);
-            Label(new Rect(p.x + 32f, p.y + 78f, width - 200f, 36f), "Score " + score + " / " + asked, 26, Muted, FontStyle.Normal, TextAnchor.MiddleLeft, false);
-            if (Button(new Rect(p.xMax - 32f - 100f, p.y + 22f, 100f, 70f), "X", 34, PanelLight, White)) quiz = null;
-
-            if (quiz == null) return p.y;
-            float gap = 16f, ow = (width - 64f - gap) / 2f, oh = 150f;
-            float oy = p.y + 130f;
-            for (int i = 0; i < quiz.Options.Count; i++)
+            if (Button(new Rect(p.xMax - 132f, p.y + 18f, 100f, 64f), "CLOSE", 22, PanelLight, White))
             {
-                Card o = quiz.Options[i];
+                if (!quizGame.Complete) abandonConfirm = true;
+                else quizGame = null;
+            }
+            if (quizGame == null) return p.y;
+            if (quizGame.Complete)
+            {
+                Label(new Rect(p.x + 28f, p.y + 90f, width - 56f, 70f), "Quiz complete!", 42, White, FontStyle.Bold, TextAnchor.MiddleCenter, false);
+                Label(new Rect(p.x + 28f, p.y + 170f, width - 56f, 100f), "Score " + quizGame.Score + " / " + quizGame.Questions.Count + "    •    " + quizGame.Correct + " correct    •    " + quizGame.Incorrect + " incorrect", 28, Muted, FontStyle.Normal, TextAnchor.MiddleCenter, true);
+                if (Button(new Rect(p.x + 30f, p.yMax - 112f, (width - 76f) / 2f, 76f), "PLAY AGAIN", 25, Blue, White)) StartQuiz(session.Current);
+                if (Button(new Rect(p.x + 46f + (width - 76f) / 2f, p.yMax - 112f, (width - 76f) / 2f, 76f), "BACK TO LEARNING", 23, PanelLight, White)) quizGame = null;
+                return p.y;
+            }
+            int qn = quizGame.Index + 1;
+            Label(new Rect(p.x + 28f, p.y + 14f, width - 190f, 38f), "QUESTION " + qn + " / " + quizGame.Questions.Count + "     SCORE " + quizGame.Score, 22, Muted, FontStyle.Bold, TextAnchor.MiddleLeft, false);
+            Rect progress = new Rect(p.x + 28f, p.y + 58f, width - 56f, 12f);
+            Box(progress, PanelLight);
+            Box(new Rect(progress.x, progress.y, progress.width * qn / quizGame.Questions.Count, progress.height), Green);
+            Label(new Rect(p.x + 30f, p.y + 82f, width - 60f, 102f), quizGame.Current.Prompt, Fit(quizGame.Current.Prompt, width - 60f, 102f, 34, 22, FontStyle.Bold), White, FontStyle.Bold, TextAnchor.MiddleLeft, true);
+            float gap = 14f, ow = (width - 76f - gap) / 2f, oh = 102f;
+            float oy = p.y + 205f;
+            for (int i = 0; i < quizOptions.Count; i++)
+            {
                 int col = i % 2, row = i / 2;
-                Rect r = new Rect(p.x + 32f + col * (ow + gap), oy + row * (oh + gap), ow, oh);
-                Color fill = PanelLight, tc = White;
-                if (quiz.Solved && o == quiz.Answer) fill = Green;
-                else if (quiz.IsWrongPicked(i)) fill = Red;
-                if (Button(r, o.Name(Lang.English), 40, fill, tc) && !quiz.Solved)
+                Rect r = new Rect(p.x + 30f + col * (ow + gap), oy + row * (oh + gap), ow, oh);
+                Color fill = PanelLight;
+                if (quizGame.Answered && quizOptions[i] == quizGame.Current.Answer) fill = Green;
+                else if (quizGame.Answered && i == quizGame.Selected) fill = Red;
+                if (Button(r, quizOptions[i], 25, fill, White) && !quizGame.Answered)
                 {
-                    if (quiz.Guess(i))
-                    {
-                        if (quiz.WrongGuesses == 0) score++;
-                        if (audio != null) audio.PlayCorrect();
-                        quizCloseAt = Time.unscaledTime + 1.6f;
-                        Toast(quiz.WrongGuesses == 0 ? "Correct!" : "Correct - well done!", 1.5f);
-                    }
-                    else
-                    {
-                        if (audio != null) audio.PlayWrong();
-                    }
+                    quizGame.Submit(i, quizOptions);
+                    if (quizOptions[i] == quizGame.Current.Answer) { if (audio != null) audio.PlayCorrect(); }
+                    else if (audio != null) audio.PlayWrong();
                 }
+            }
+            if (quizGame.Answered && Button(new Rect(p.x + 30f, p.yMax - 72f, width - 60f, 54f), qn == quizGame.Questions.Count ? "SEE RESULTS" : "NEXT QUESTION", 22, Blue, White))
+            {
+                quizGame.Next();
+                if (!quizGame.Complete) quizOptions = quizGame.ShuffledOptions(rng);
             }
             return p.y;
         }

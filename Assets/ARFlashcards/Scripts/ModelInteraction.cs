@@ -15,17 +15,20 @@ namespace ARFlashcards
         /// <summary>Raised by the +/- buttons; every visible model reacts.</summary>
         public static event Action<float> ZoomRequested;
         public static void RequestZoom(float factor) { if (ZoomRequested != null) ZoomRequested(factor); }
+        public static event Action ResetRequested;
+        public static void RequestReset() { if (ResetRequested != null) ResetRequested(); }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        static void ResetStatics() { ZoomRequested = null; }
+        static void ResetStatics() { ZoomRequested = null; ResetRequested = null; }
 
         float yaw, factor = 1f, popT;
         float idleTimer;
 
-        void OnEnable() { popT = 0f; ZoomRequested += OnZoom; Apply(0f); }
-        void OnDisable() { ZoomRequested -= OnZoom; }
+        void OnEnable() { popT = 0f; ZoomRequested += OnZoom; ResetRequested += OnReset; Apply(0f); }
+        void OnDisable() { ZoomRequested -= OnZoom; ResetRequested -= OnReset; }
 
         void OnZoom(float f) { factor = Mathf.Clamp(factor * f, minFactor, maxFactor); }
+        void OnReset() { yaw = 0f; factor = 1f; idleTimer = 1.2f; Apply(EaseOutBack(popT)); }
 
         void Update()
         {

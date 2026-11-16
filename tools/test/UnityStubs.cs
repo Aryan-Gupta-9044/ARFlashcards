@@ -95,10 +95,20 @@ namespace UnityEngine
     public static class Time { public static float time, deltaTime = 0.016f, unscaledTime, realtimeSinceStartup; }
     public static class Screen { public static int width = 1080, height = 1920; public static Rect safeArea = new Rect(0, 0, 1080, 1920); public static int sleepTimeout; }
     public static class SleepTimeout { public const int NeverSleep = -1; }
-    public static class Application { public static int targetFrameRate; public static void OpenURL(string u) { } }
+    public static class Application { public static int targetFrameRate; public static void OpenURL(string u) { } public static void Quit() { } }
+    public static class PlayerPrefs
+    {
+        static readonly Dictionary<string, string> values = new Dictionary<string, string>();
+        public static int GetInt(string key, int fallback = 0) { string v; return values.TryGetValue(key, out v) ? int.Parse(v) : fallback; }
+        public static void SetInt(string key, int value) { values[key] = value.ToString(); }
+        public static string GetString(string key, string fallback = "") { string v; return values.TryGetValue(key, out v) ? v : fallback; }
+        public static void SetString(string key, string value) { values[key] = value; }
+        public static void Save() { }
+    }
     public static class Debug { public static void Log(object o) { } public static void LogWarning(object o) { Console.WriteLine("WARN " + o); } }
     public static class Random { static System.Random r = new System.Random(7); public static float value { get { return (float)r.NextDouble(); } } }
     public class WaitForSeconds { public WaitForSeconds(float s) { } }
+    public class WaitForSecondsRealtime { public WaitForSecondsRealtime(float s) { } }
     public enum PrimitiveType { Sphere, Capsule, Cylinder, Cube }
     public enum TextureFormat { RGBA32 }
     public enum FilterMode { Bilinear }
@@ -110,7 +120,8 @@ namespace UnityEngine
     public enum TextAnchor { UpperLeft, MiddleLeft, MiddleCenter, MiddleRight }
     public enum TextClipping { Overflow, Clip }
     public enum ScaleMode { StretchToFill, ScaleToFit }
-    public enum EventType { MouseDown, MouseUp, MouseDrag, ScrollWheel, Repaint, Layout, Used }
+    public enum EventType { MouseDown, MouseUp, MouseDrag, ScrollWheel, Repaint, Layout, Used, KeyDown }
+    public enum KeyCode { Escape }
 
     public class Object
     {
@@ -257,7 +268,8 @@ namespace UnityEngine
     public class Event
     {
         public static Event current = new Event();
-        public EventType type = EventType.Repaint; public Vector2 mousePosition, delta;
+        public EventType type = EventType.Repaint; public KeyCode keyCode; public Vector2 mousePosition, delta;
+        public void Use() { type = EventType.Used; }
     }
     public static class GUI
     {
